@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 from openai import OpenAI
 
@@ -26,14 +27,12 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* 전체 화면 최대 너비 */
     .block-container {
         max-width: 1250px;
         padding-top: 2rem;
         padding-bottom: 4rem;
     }
 
-    /* 앱 상단 소개 영역 */
     .main-banner {
         padding: 28px 30px;
         border-radius: 22px;
@@ -58,7 +57,6 @@ st.markdown(
         line-height: 1.65;
     }
 
-    /* 단계 제목 */
     .step-title {
         padding: 14px 18px;
         margin-top: 20px;
@@ -70,7 +68,50 @@ st.markdown(
         font-weight: 850;
     }
 
-    /* AI 상담 영역 */
+    .map-banner {
+        margin-top: 20px;
+        margin-bottom: 15px;
+        padding: 18px 22px;
+        border-radius: 16px;
+        border: 2px solid rgba(32, 125, 210, 0.55);
+        background: linear-gradient(
+            135deg,
+            rgba(219, 239, 255, 0.8),
+            rgba(236, 248, 255, 0.8)
+        );
+    }
+
+    .map-banner h3 {
+        margin: 0 0 6px 0;
+        font-size: 24px;
+        font-weight: 900;
+    }
+
+    .map-banner p {
+        margin: 0;
+        line-height: 1.55;
+    }
+
+    .selected-hospital-card {
+        padding: 18px 20px;
+        margin: 12px 0 16px 0;
+        border-radius: 16px;
+        border: 3px solid #ff3b30;
+        background: rgba(255, 59, 48, 0.07);
+        box-shadow: 0 5px 18px rgba(255, 59, 48, 0.14);
+    }
+
+    .selected-hospital-card h4 {
+        margin: 0 0 8px 0;
+        font-size: 21px;
+        font-weight: 900;
+    }
+
+    .selected-hospital-card p {
+        margin: 3px 0;
+        line-height: 1.5;
+    }
+
     .ai-chat-banner {
         margin-top: 34px;
         margin-bottom: 18px;
@@ -97,7 +138,6 @@ st.markdown(
         line-height: 1.65;
     }
 
-    /* AI 질문 예시 카드 */
     .question-example {
         min-height: 108px;
         padding: 16px;
@@ -108,7 +148,6 @@ st.markdown(
         line-height: 1.55;
     }
 
-    /* 채팅 메시지 말풍선 */
     [data-testid="stChatMessage"] {
         border: 1px solid rgba(108, 99, 255, 0.30);
         border-radius: 17px;
@@ -118,7 +157,6 @@ st.markdown(
         box-shadow: 0 3px 12px rgba(60, 55, 150, 0.07);
     }
 
-    /* 채팅 입력창 주변을 강조 */
     [data-testid="stChatInput"] {
         border: 3px solid #6c63ff;
         border-radius: 20px;
@@ -132,14 +170,12 @@ st.markdown(
         min-height: 52px;
     }
 
-    /* 버튼을 조금 더 크게 */
     div.stButton > button {
         min-height: 44px;
         font-weight: 750;
         border-radius: 12px;
     }
 
-    /* 모바일 화면 보정 */
     @media (max-width: 700px) {
         .main-banner {
             padding: 20px;
@@ -164,16 +200,17 @@ st.markdown(
 
 
 # =========================================================
-# 3. 앱 제목
+# 3. 앱 상단 제목
 # =========================================================
 st.markdown(
     """
     <div class="main-banner">
         <h1>🏥 실시간 응급실 혼잡도 안내</h1>
         <p>
-            현재 지역과 필요한 진료 분야를 입력하면,
-            주변 응급실의 실시간 가용 병상과 의료시설 정보를 확인할 수 있습니다.
-            조회 결과를 바탕으로 AI에게 어느 병원에 먼저 전화할지 질문할 수도 있습니다.
+            현재 지역과 필요한 진료 분야를 입력하면 주변 응급실의
+            실시간 가용 병상과 의료시설 정보를 확인할 수 있습니다.<br>
+            응급실 위치를 지도에서 비교하고, AI에게 어느 병원에 먼저
+            전화할지 질문할 수도 있습니다.
         </p>
     </div>
     """,
@@ -182,11 +219,11 @@ st.markdown(
 
 
 # =========================================================
-# 4. 응급 상황 안전 안내
+# 4. 안전 안내
 # =========================================================
 st.error(
     """
-    **생명이 위급한 상황에서는 이 앱을 사용해 병원을 비교하지 말고 즉시 119에 연락하세요.**
+    **생명이 위급한 상황에서는 이 앱으로 병원을 비교하지 말고 즉시 119에 연락하세요.**
 
     호흡 곤란, 의식 저하, 심한 출혈, 갑작스러운 마비, 심한 가슴 통증,
     경련, 심각한 알레르기 반응 등이 있으면 바로 119에 도움을 요청해야 합니다.
@@ -197,24 +234,32 @@ st.info(
     """
     이 앱의 혼잡도는 실제 대기 환자 수나 대기시간이 아닙니다.
 
-    국립중앙의료원 Open API가 제공하는 응급실 가용 병상과 관련 시설 정보를 바탕으로
+    국립중앙의료원 Open API의 응급실 가용 병상과 관련 시설 정보를 바탕으로
     계산한 참고용 추정치입니다. 출발 전에 반드시 응급실에 전화해 수용 가능 여부를 확인하세요.
     """
 )
 
 
 # =========================================================
-# 5. API 기본 정보
+# 5. API 주소
 # =========================================================
 
-# 국립중앙의료원 전국 응급의료기관 정보 조회 서비스
-EMERGENCY_API_URL = (
+# 실시간 응급실 가용병상 조회
+EMERGENCY_BED_API_URL = (
     "https://apis.data.go.kr/B552657/"
     "ErmctInfoInqireService/"
     "getEmrrmRltmUsefulSckbdInfoInqire"
 )
 
-# Solar API 정보
+# 지역별 응급의료기관 목록 조회
+# 병원 주소와 위도·경도를 가져오는 데 사용합니다.
+EMERGENCY_LIST_API_URL = (
+    "https://apis.data.go.kr/B552657/"
+    "ErmctInfoInqireService/"
+    "getEgytListInfoInqire"
+)
+
+# Solar API 설정
 SOLAR_BASE_URL = "https://api.upstage.ai/v1"
 SOLAR_MODEL = "solar-open2"
 
@@ -363,7 +408,7 @@ DEPARTMENT_RULES = {
 
     "치과 응급": {
         "description": (
-            "이 API에는 치과 전용 병상이나 치과 당직 정보가 없습니다. "
+            "치과 전용 병상이나 치과 당직 정보는 제공되지 않습니다. "
             "응급실 병상, 수술실과 CT 정보를 참고용으로 확인합니다."
         ),
         "numeric_fields": ["수술실"],
@@ -373,11 +418,9 @@ DEPARTMENT_RULES = {
 
 
 # =========================================================
-# 8. XML 태그 후보
+# 8. 실시간 병상 XML 태그 후보
 # =========================================================
-# XML은 대소문자를 구분합니다.
-# 실제 API에서 dutyName 또는 dutyname처럼 다르게 오는 경우를 모두 처리합니다.
-XML_FIELD_MAP = {
+BED_XML_FIELD_MAP = {
     "기관코드": ["hpid", "HPID"],
     "병원명": ["dutyName", "dutyname", "DUTYNAME"],
     "응급실전화": ["dutyTel3", "dutytel3", "DUTYTEL3"],
@@ -415,11 +458,40 @@ XML_FIELD_MAP = {
 
 
 # =========================================================
-# 9. 보조 함수
+# 9. 병원 위치정보 XML 태그 후보
+# =========================================================
+LOCATION_XML_FIELD_MAP = {
+    "기관코드": ["hpid", "HPID"],
+    "위치병원명": ["dutyName", "dutyname", "DUTYNAME"],
+    "병원주소": ["dutyAddr", "dutyaddr", "DUTYADDR"],
+    "대표전화": ["dutyTel1", "dutytel1", "DUTYTEL1"],
+    "위치응급실전화": ["dutyTel3", "dutytel3", "DUTYTEL3"],
+
+    # 공공데이터 API에서 사용하는 WGS84 좌표 태그 후보
+    "경도": [
+        "wgs84Lon",
+        "wgs84lon",
+        "WGS84LON",
+        "wgs84LON",
+        "lon",
+    ],
+    "위도": [
+        "wgs84Lat",
+        "wgs84lat",
+        "WGS84LAT",
+        "wgs84LAT",
+        "lat",
+    ],
+}
+
+
+# =========================================================
+# 10. 보조 함수
 # =========================================================
 def safe_text_any(element, tag_candidates, default=""):
     """
     여러 XML 태그 후보를 차례로 확인해 값을 읽습니다.
+    XML은 대소문자를 구분하므로 후보를 여러 개 둡니다.
     """
     for tag_name in tag_candidates:
         child = element.find(tag_name)
@@ -451,9 +523,27 @@ def to_int(value, default=0):
         return default
 
 
+def to_float(value, default=None):
+    """
+    위도와 경도를 안전하게 실수로 변환합니다.
+    """
+    if value is None:
+        return default
+
+    text = str(value).strip().replace(",", "")
+
+    if not text:
+        return default
+
+    try:
+        return float(text)
+    except (ValueError, TypeError):
+        return default
+
+
 def normalize_yes_no(value):
     """
-    Y/N 값을 화면에 표시하기 좋은 한국어로 바꿉니다.
+    Y/N 값을 화면 표시용 한국어로 바꿉니다.
     """
     text = str(value).strip().upper()
 
@@ -480,8 +570,11 @@ def parse_location(location_text):
     found_sido = None
     found_alias = None
 
-    # 이름이 긴 항목부터 확인합니다.
-    aliases = sorted(SIDO_ALIASES.keys(), key=len, reverse=True)
+    aliases = sorted(
+        SIDO_ALIASES.keys(),
+        key=len,
+        reverse=True,
+    )
 
     for alias in aliases:
         if alias in cleaned:
@@ -502,48 +595,31 @@ def parse_location(location_text):
             sigungu = token
             break
 
-    # 세종시는 시군구를 별도로 쓰지 않는 경우가 있어 예외 처리합니다.
     if found_sido == "세종특별자치시" and not sigungu:
         sigungu = "세종특별자치시"
 
     return found_sido, sigungu
 
 
-def build_api_url(api_key, sido, sigungu, page_no=1, rows=100):
+def normalize_api_key(api_key):
     """
-    공공데이터 API 요청 주소를 만듭니다.
+    공공데이터포털 인증키가 이미 URL 인코딩된 경우를 처리합니다.
     """
-    # 인증키가 이미 인코딩된 형태일 수 있어 먼저 해제합니다.
-    decoded_key = urllib.parse.unquote(str(api_key).strip())
-
-    params = {
-        "serviceKey": decoded_key,
-        "STAGE1": sido,
-        "STAGE2": sigungu,
-        "pageNo": page_no,
-        "numOfRows": rows,
-    }
-
-    query_string = urllib.parse.urlencode(params)
-
-    return f"{EMERGENCY_API_URL}?{query_string}"
+    return urllib.parse.unquote(str(api_key).strip())
 
 
-# 같은 지역의 결과는 1분 동안 저장합니다.
-# 사용자가 새로고침할 때 API가 지나치게 많이 호출되는 것을 막습니다.
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_emergency_rooms(api_key, sido, sigungu):
+def build_api_url(base_url, parameters):
     """
-    국립중앙의료원 API에서 응급실 정보를 가져옵니다.
+    API 기본 주소와 요청변수를 하나의 URL로 만듭니다.
     """
-    url = build_api_url(
-        api_key=api_key,
-        sido=sido,
-        sigungu=sigungu,
-        page_no=1,
-        rows=100,
-    )
+    query_string = urllib.parse.urlencode(parameters)
+    return f"{base_url}?{query_string}"
 
+
+def request_xml(url):
+    """
+    API 주소를 호출하고 XML의 최상위 요소를 반환합니다.
+    """
     request = urllib.request.Request(
         url,
         headers={
@@ -553,7 +629,7 @@ def fetch_emergency_rooms(api_key, sido, sigungu):
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=20) as response:
             xml_bytes = response.read()
 
     except urllib.error.HTTPError as error:
@@ -568,18 +644,23 @@ def fetch_emergency_rooms(api_key, sido, sigungu):
 
     except TimeoutError as error:
         raise RuntimeError(
-            "공공데이터 서버 응답이 지연되고 있습니다."
+            "공공데이터 서버의 응답이 지연되고 있습니다."
         ) from error
 
     try:
         root = ET.fromstring(xml_bytes)
 
     except ET.ParseError as error:
+        preview = xml_bytes.decode(
+            "utf-8",
+            errors="ignore",
+        )[:200]
+
         raise RuntimeError(
-            "공공데이터 응답을 XML 형식으로 읽지 못했습니다."
+            "공공데이터 응답을 XML 형식으로 읽지 못했습니다. "
+            f"응답 일부: {preview}"
         ) from error
 
-    # API가 반환한 결과 코드를 확인합니다.
     result_code = root.findtext(".//resultCode")
 
     result_message = (
@@ -593,20 +674,45 @@ def fetch_emergency_rooms(api_key, sido, sigungu):
             f"API 요청 실패: {result_code} / {result_message}"
         )
 
+    return root
+
+
+# =========================================================
+# 11. 실시간 병상 조회
+# =========================================================
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_emergency_beds(api_key, sido, sigungu):
+    """
+    시도와 시군구를 기준으로 실시간 응급실 병상을 조회합니다.
+    같은 검색 결과는 1분 동안 저장합니다.
+    """
+    parameters = {
+        "serviceKey": normalize_api_key(api_key),
+        "STAGE1": sido,
+        "STAGE2": sigungu,
+        "pageNo": 1,
+        "numOfRows": 100,
+    }
+
+    url = build_api_url(
+        EMERGENCY_BED_API_URL,
+        parameters,
+    )
+
+    root = request_xml(url)
     items = root.findall(".//item")
     rows = []
 
     for item in items:
         row = {}
 
-        for korean_name, tag_candidates in XML_FIELD_MAP.items():
+        for korean_name, tag_candidates in BED_XML_FIELD_MAP.items():
             row[korean_name] = safe_text_any(
                 item,
                 tag_candidates,
                 default="",
             )
 
-        # 병원명과 전화번호가 없는 경우 안내 문구를 넣습니다.
         if not row.get("병원명"):
             row["병원명"] = "병원명 정보 없음"
 
@@ -659,15 +765,142 @@ def fetch_emergency_rooms(api_key, sido, sigungu):
     return df
 
 
+# =========================================================
+# 12. 병원 주소와 위도·경도 조회
+# =========================================================
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_emergency_locations(api_key, sido, sigungu):
+    """
+    지역별 응급의료기관 목록에서 주소와 위도·경도를 가져옵니다.
+
+    위치정보는 병상처럼 자주 바뀌지 않으므로
+    같은 결과를 24시간 동안 저장합니다.
+    """
+    parameters = {
+        "serviceKey": normalize_api_key(api_key),
+
+        # 이 목록 조회 기능은 Q0, Q1을 지역 검색에 사용합니다.
+        "Q0": sido,
+        "Q1": sigungu,
+
+        "pageNo": 1,
+        "numOfRows": 100,
+    }
+
+    url = build_api_url(
+        EMERGENCY_LIST_API_URL,
+        parameters,
+    )
+
+    root = request_xml(url)
+    items = root.findall(".//item")
+    rows = []
+
+    for item in items:
+        row = {}
+
+        for korean_name, tag_candidates in LOCATION_XML_FIELD_MAP.items():
+            row[korean_name] = safe_text_any(
+                item,
+                tag_candidates,
+                default="",
+            )
+
+        row["위도"] = to_float(row.get("위도"))
+        row["경도"] = to_float(row.get("경도"))
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    location_df = pd.DataFrame(rows)
+
+    # 기관코드가 같은 행이 여러 개면 첫 번째 행만 사용합니다.
+    if "기관코드" in location_df.columns:
+        location_df = location_df.drop_duplicates(
+            subset=["기관코드"],
+            keep="first",
+        )
+
+    return location_df
+
+
+# =========================================================
+# 13. 병상과 위치정보 결합
+# =========================================================
+def merge_bed_and_location_data(bed_df, location_df):
+    """
+    기관코드를 기준으로 실시간 병상정보와 병원 위치정보를 합칩니다.
+    """
+    if bed_df.empty:
+        return bed_df
+
+    result_df = bed_df.copy()
+
+    if location_df.empty:
+        result_df["병원주소"] = ""
+        result_df["대표전화"] = ""
+        result_df["위도"] = None
+        result_df["경도"] = None
+        return result_df
+
+    result_df = result_df.merge(
+        location_df,
+        on="기관코드",
+        how="left",
+    )
+
+    # 실시간 병상 응답에서 병원명이 없으면 위치정보 병원명을 사용합니다.
+    if "위치병원명" in result_df.columns:
+        missing_name = (
+            result_df["병원명"].isna()
+            | result_df["병원명"].eq("")
+            | result_df["병원명"].eq("병원명 정보 없음")
+        )
+
+        result_df.loc[missing_name, "병원명"] = (
+            result_df.loc[missing_name, "위치병원명"]
+        )
+
+    # 실시간 응답 전화번호가 없으면 위치정보의 응급실 전화번호를 사용합니다.
+    if "위치응급실전화" in result_df.columns:
+        missing_phone = (
+            result_df["응급실전화"].isna()
+            | result_df["응급실전화"].eq("")
+            | result_df["응급실전화"].eq("전화번호 정보 없음")
+        )
+
+        result_df.loc[missing_phone, "응급실전화"] = (
+            result_df.loc[missing_phone, "위치응급실전화"]
+        )
+
+    result_df["병원명"] = result_df["병원명"].fillna(
+        "병원명 정보 없음"
+    )
+
+    result_df["응급실전화"] = result_df["응급실전화"].fillna(
+        "전화번호 정보 없음"
+    )
+
+    result_df["병원주소"] = result_df["병원주소"].fillna("")
+    result_df["대표전화"] = result_df["대표전화"].fillna("")
+
+    result_df["위도"] = result_df["위도"].apply(to_float)
+    result_df["경도"] = result_df["경도"].apply(to_float)
+
+    return result_df
+
+
+# =========================================================
+# 14. 혼잡도 계산
+# =========================================================
 def calculate_crowding(row, department):
     """
-    가용 응급실 병상과 진료 분야 관련 시설을 바탕으로
-    추정 혼잡도를 계산합니다.
-
-    실제 대기 환자 수 또는 실제 대기시간은 아닙니다.
+    응급실 가용 병상과 관련 의료시설을 이용해
+    참고용 추정 혼잡도를 계산합니다.
     """
     emergency_beds = to_int(row.get("응급실", 0))
-
     rule = DEPARTMENT_RULES[department]
 
     related_beds = 0
@@ -683,11 +916,9 @@ def calculate_crowding(row, department):
 
         if value == "가능":
             available_facilities += 1
-
         elif value == "불가":
             unavailable_facilities += 1
 
-    # 기본 혼잡도는 응급실 가용 병상 수를 기준으로 정합니다.
     if emergency_beds <= 0:
         level = "매우 혼잡"
         level_order = 4
@@ -708,7 +939,6 @@ def calculate_crowding(row, department):
         level_order = 1
         icon = "🟢"
 
-    # 필요한 장비가 불가능한 경우 혼잡도를 한 단계 주의 상태로 조정합니다.
     if unavailable_facilities > 0:
         if level == "원활":
             level = "보통"
@@ -740,9 +970,197 @@ def calculate_crowding(row, department):
     )
 
 
-def make_ai_hospital_context(df, location, department, symptom):
+# =========================================================
+# 15. 지도용 색상
+# =========================================================
+def get_map_color(crowding_level):
     """
-    AI가 현재 조회 결과를 참고할 수 있도록 문자열로 정리합니다.
+    혼잡도에 따라 지도 표식 색상을 정합니다.
+    반환값은 빨강, 초록, 파랑, 투명도 순서입니다.
+    """
+    color_map = {
+        "원활": [35, 180, 90, 190],
+        "보통": [255, 190, 20, 200],
+        "혼잡": [255, 120, 20, 210],
+        "매우 혼잡": [220, 45, 45, 220],
+    }
+
+    return color_map.get(
+        crowding_level,
+        [100, 130, 160, 180],
+    )
+
+
+def prepare_map_dataframe(df):
+    """
+    좌표가 정상적으로 있는 병원만 지도용 데이터로 정리합니다.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    map_df = df.copy()
+
+    map_df["위도"] = pd.to_numeric(
+        map_df["위도"],
+        errors="coerce",
+    )
+
+    map_df["경도"] = pd.to_numeric(
+        map_df["경도"],
+        errors="coerce",
+    )
+
+    map_df = map_df.dropna(
+        subset=["위도", "경도"]
+    )
+
+    # 대한민국 범위를 크게 벗어난 잘못된 좌표는 제거합니다.
+    map_df = map_df[
+        map_df["위도"].between(32, 39)
+        & map_df["경도"].between(124, 132)
+    ].copy()
+
+    if map_df.empty:
+        return map_df
+
+    map_df["지도색상"] = map_df["혼잡도"].apply(
+        get_map_color
+    )
+
+    map_df["지도반경"] = 90
+    map_df["주소표시"] = map_df["병원주소"].replace(
+        "",
+        "주소 정보 없음",
+    )
+
+    return map_df
+
+
+def create_hospital_map(map_df, selected_hpid):
+    """
+    전체 응급실과 선택한 응급실을 지도에 표시합니다.
+
+    선택한 병원은 큰 빨간색 외곽 원과 흰색 중심점으로 강조합니다.
+    """
+    selected_df = map_df[
+        map_df["기관코드"] == selected_hpid
+    ].copy()
+
+    if selected_df.empty:
+        selected_df = map_df.head(1).copy()
+
+    selected_latitude = float(
+        selected_df.iloc[0]["위도"]
+    )
+
+    selected_longitude = float(
+        selected_df.iloc[0]["경도"]
+    )
+
+    # 모든 병원을 혼잡도 색상으로 표시하는 층
+    all_hospitals_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_df,
+        get_position="[경도, 위도]",
+        get_fill_color="지도색상",
+        get_line_color=[255, 255, 255, 230],
+        get_radius=90,
+        radius_min_pixels=7,
+        radius_max_pixels=18,
+        line_width_min_pixels=2,
+        stroked=True,
+        filled=True,
+        pickable=True,
+        auto_highlight=True,
+    )
+
+    # 선택 병원 바깥의 큰 빨간 원
+    selected_outer_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=selected_df,
+        get_position="[경도, 위도]",
+        get_fill_color=[255, 45, 45, 70],
+        get_line_color=[255, 0, 0, 255],
+        get_radius=220,
+        radius_min_pixels=20,
+        radius_max_pixels=34,
+        line_width_min_pixels=5,
+        stroked=True,
+        filled=True,
+        pickable=True,
+    )
+
+    # 선택 병원 중심의 흰색 점
+    selected_center_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=selected_df,
+        get_position="[경도, 위도]",
+        get_fill_color=[255, 255, 255, 255],
+        get_line_color=[190, 0, 0, 255],
+        get_radius=55,
+        radius_min_pixels=7,
+        radius_max_pixels=12,
+        line_width_min_pixels=3,
+        stroked=True,
+        filled=True,
+        pickable=True,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=selected_latitude,
+        longitude=selected_longitude,
+        zoom=12,
+        pitch=0,
+    )
+
+    tooltip = {
+        "html": """
+        <div style="font-size:14px; line-height:1.55;">
+            <b style="font-size:16px;">{병원명}</b><br>
+            추정 혼잡도: <b>{혼잡도표시}</b><br>
+            응급실 가용 병상: <b>{응급실}개</b><br>
+            주소: {주소표시}<br>
+            응급실 전화: {응급실전화}
+        </div>
+        """,
+        "style": {
+            "backgroundColor": "rgba(25, 30, 40, 0.94)",
+            "color": "white",
+            "borderRadius": "10px",
+            "padding": "10px",
+        },
+    }
+
+    return pdk.Deck(
+        layers=[
+            all_hospitals_layer,
+            selected_outer_layer,
+            selected_center_layer,
+        ],
+        initial_view_state=view_state,
+
+        # 별도의 Mapbox 키 없이 사용할 수 있는 공개 지도 스타일입니다.
+        map_style=(
+            "https://basemaps.cartocdn.com/"
+            "gl/positron-gl-style/style.json"
+        ),
+
+        tooltip=tooltip,
+    )
+
+
+# =========================================================
+# 16. AI용 병원정보 정리
+# =========================================================
+def make_ai_hospital_context(
+    df,
+    location,
+    department,
+    symptom,
+    selected_hospital_name,
+):
+    """
+    AI가 조회 결과를 참고할 수 있도록 문자열로 정리합니다.
     """
     if df is None or df.empty:
         return "현재 조회된 응급실 정보가 없습니다."
@@ -751,11 +1169,11 @@ def make_ai_hospital_context(df, location, department, symptom):
         f"사용자가 입력한 위치: {location}",
         f"선택한 진료 분야: {department}",
         f"입력한 증상: {symptom or '입력하지 않음'}",
+        f"지도에서 선택한 병원: {selected_hospital_name or '선택하지 않음'}",
         "",
         "현재 조회된 응급실 정보:",
     ]
 
-    # AI에 너무 많은 정보가 전달되지 않도록 상위 10곳만 사용합니다.
     for _, row in df.head(10).iterrows():
         lines.append(
             (
@@ -768,7 +1186,8 @@ def make_ai_hospital_context(df, location, department, symptom):
                 f"MRI: {row.get('MRI', '정보 없음')}, "
                 f"인공호흡기: {row.get('인공호흡기', '정보 없음')}, "
                 f"응급실 전화: {row.get('응급실전화', '정보 없음')}, "
-                f"입력 시각: {row.get('입력일시', '정보 없음')}"
+                f"주소: {row.get('병원주소', '정보 없음')}, "
+                f"정보 입력 시각: {row.get('입력일시', '정보 없음')}"
             )
         )
 
@@ -776,8 +1195,8 @@ def make_ai_hospital_context(df, location, department, symptom):
         [
             "",
             "반드시 지켜야 할 조건:",
-            "- 이 혼잡도는 실제 대기시간이 아니라 가용 병상 기반 추정치다.",
-            "- 같은 시군구 안의 병원을 조회한 것이며 실제 거리순이 아니다.",
+            "- 혼잡도는 실제 대기시간이 아니라 가용 병상 기반 추정치다.",
+            "- 같은 시군구 안의 병원 목록이며 사용자와의 정확한 거리순이 아니다.",
             "- 출발 전 병원에 전화해 수용 가능 여부를 확인해야 한다.",
             "- 생명이 위급하면 병원 비교보다 119 신고를 우선 안내해야 한다.",
             "- 치과 응급은 치과 전용 진료 가능 정보를 제공하지 않는다.",
@@ -789,7 +1208,7 @@ def make_ai_hospital_context(df, location, department, symptom):
 
 def get_solar_client():
     """
-    Streamlit 비밀 금고에서 Solar API 키를 읽습니다.
+    Streamlit 비밀 금고에서 Solar API 키를 불러옵니다.
     """
     solar_api_key = st.secrets.get("SOLAR_API_KEY")
 
@@ -804,7 +1223,7 @@ def get_solar_client():
 
 def stream_solar_answer(client, messages):
     """
-    Solar 답변을 스트리밍 형태로 전달합니다.
+    Solar 답변을 스트리밍으로 전달합니다.
     """
     stream = client.chat.completions.create(
         model=SOLAR_MODEL,
@@ -825,7 +1244,7 @@ def stream_solar_answer(client, messages):
 
 
 # =========================================================
-# 10. 세션 상태 초기화
+# 17. 세션 상태 초기화
 # =========================================================
 if "emergency_df" not in st.session_state:
     st.session_state.emergency_df = pd.DataFrame()
@@ -842,9 +1261,15 @@ if "search_symptom" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "selected_hpid" not in st.session_state:
+    st.session_state.selected_hpid = ""
+
+if "selected_hospital_name" not in st.session_state:
+    st.session_state.selected_hospital_name = ""
+
 
 # =========================================================
-# 11. 1단계: 위치 입력
+# 18. 1단계: 위치 입력
 # =========================================================
 st.markdown(
     '<div class="step-title">1단계 · 현재 위치 입력</div>',
@@ -862,14 +1287,15 @@ location_input = st.text_input(
     placeholder="예: 서울 강남구 역삼동",
 )
 
-parsed_sido, parsed_sigungu = parse_location(location_input)
+parsed_sido, parsed_sigungu = parse_location(
+    location_input
+)
 
 if location_input:
     if parsed_sido and parsed_sigungu:
         st.success(
             f"API 검색 지역: **{parsed_sido} {parsed_sigungu}**"
         )
-
     else:
         st.warning(
             "지역을 정확히 찾지 못했습니다. "
@@ -878,16 +1304,20 @@ if location_input:
 
 
 # =========================================================
-# 12. 2단계: 진료 분야 입력
+# 19. 2단계: 진료 분야 선택
 # =========================================================
 st.markdown(
     '<div class="step-title">2단계 · 필요한 응급 진료 선택</div>',
     unsafe_allow_html=True,
 )
 
-department_names = list(DEPARTMENT_RULES.keys())
+department_names = list(
+    DEPARTMENT_RULES.keys()
+)
 
-saved_department = st.session_state.search_department
+saved_department = (
+    st.session_state.search_department
+)
 
 if saved_department not in department_names:
     saved_department = "일반 응급"
@@ -895,10 +1325,14 @@ if saved_department not in department_names:
 department = st.selectbox(
     "진료가 필요하다고 생각하는 분야",
     options=department_names,
-    index=department_names.index(saved_department),
+    index=department_names.index(
+        saved_department
+    ),
 )
 
-st.caption(DEPARTMENT_RULES[department]["description"])
+st.caption(
+    DEPARTMENT_RULES[department]["description"]
+)
 
 if department == "치과 응급":
     st.warning(
@@ -931,7 +1365,7 @@ search_button = st.button(
 
 
 # =========================================================
-# 13. API 조회 실행
+# 20. 응급실 검색 실행
 # =========================================================
 if search_button:
     if not location_input.strip():
@@ -944,7 +1378,9 @@ if search_button:
         )
 
     else:
-        emergency_api_key = st.secrets.get("Emergency_API_KEY")
+        emergency_api_key = st.secrets.get(
+            "Emergency_API_KEY"
+        )
 
         if not emergency_api_key:
             st.error(
@@ -954,11 +1390,24 @@ if search_button:
 
         else:
             try:
-                with st.spinner("실시간 응급실 정보를 확인하고 있습니다..."):
-                    result_df = fetch_emergency_rooms(
+                with st.spinner(
+                    "실시간 병상과 병원 위치를 확인하고 있습니다..."
+                ):
+                    bed_df = fetch_emergency_beds(
                         api_key=emergency_api_key,
                         sido=parsed_sido,
                         sigungu=parsed_sigungu,
+                    )
+
+                    location_df = fetch_emergency_locations(
+                        api_key=emergency_api_key,
+                        sido=parsed_sido,
+                        sigungu=parsed_sigungu,
+                    )
+
+                    result_df = merge_bed_and_location_data(
+                        bed_df=bed_df,
+                        location_df=location_df,
                     )
 
                 if result_df.empty:
@@ -966,7 +1415,7 @@ if search_button:
 
                     st.warning(
                         "해당 지역에서 조회된 응급실 정보가 없습니다. "
-                        "시군구 이름을 확인하거나 인접한 지역으로 다시 검색해 주세요."
+                        "시군구 이름을 확인하거나 인접 지역으로 다시 검색해 주세요."
                     )
 
                 else:
@@ -1004,12 +1453,29 @@ if search_button:
                     st.session_state.search_department = department
                     st.session_state.search_symptom = symptom
 
+                    first_hpid = str(
+                        result_df.iloc[0].get(
+                            "기관코드",
+                            "",
+                        )
+                    )
+
+                    first_name = str(
+                        result_df.iloc[0].get(
+                            "병원명",
+                            "",
+                        )
+                    )
+
+                    st.session_state.selected_hpid = first_hpid
+                    st.session_state.selected_hospital_name = first_name
+
                     st.success(
                         f"{parsed_sido} {parsed_sigungu}에서 "
                         f"응급실 {len(result_df)}곳을 조회했습니다."
                     )
 
-            except Exception:
+            except Exception as error:
                 st.session_state.emergency_df = pd.DataFrame()
 
                 st.error(
@@ -1026,9 +1492,12 @@ if search_button:
                     """
                 )
 
+                with st.expander("개발용 오류 내용 보기"):
+                    st.code(str(error))
+
 
 # =========================================================
-# 14. 검색 결과 표시
+# 21. 검색 결과
 # =========================================================
 result_df = st.session_state.emergency_df
 
@@ -1089,29 +1558,48 @@ if not result_df.empty:
         "선택 진료 분야 관련 병상·시설 점수가 높은 순"
     )
 
-    active_department = st.session_state.search_department
-    rule = DEPARTMENT_RULES[active_department]
+    active_department = (
+        st.session_state.search_department
+    )
+
+    rule = DEPARTMENT_RULES[
+        active_department
+    ]
 
     display_columns = [
         "혼잡도표시",
         "병원명",
+        "병원주소",
         "응급실전화",
         "응급실",
     ]
 
-    # 선택한 진료 분야와 관련된 병상 정보를 표에 추가합니다.
     for field in rule["numeric_fields"]:
-        if field in result_df.columns and field not in display_columns:
+        if (
+            field in result_df.columns
+            and field not in display_columns
+        ):
             display_columns.append(field)
 
-    # 선택한 진료 분야와 관련된 시설 정보를 표에 추가합니다.
     for field in rule["yn_fields"]:
-        if field in result_df.columns and field not in display_columns:
+        if (
+            field in result_df.columns
+            and field not in display_columns
+        ):
             display_columns.append(field)
 
     display_columns.append("입력일시")
 
-    display_df = result_df[display_columns].copy()
+    # 실제로 존재하는 열만 사용합니다.
+    display_columns = [
+        column
+        for column in display_columns
+        if column in result_df.columns
+    ]
+
+    display_df = result_df[
+        display_columns
+    ].copy()
 
     display_df = display_df.rename(
         columns={
@@ -1126,7 +1614,160 @@ if not result_df.empty:
         hide_index=True,
     )
 
+
+# =========================================================
+# 22. 응급실 지도
+# =========================================================
+if not result_df.empty:
+    st.markdown(
+        """
+        <div class="map-banner">
+            <h3>🗺️ 응급실 위치 지도</h3>
+            <p>
+                지도에서 확인할 병원을 고르세요.
+                선택한 응급실은 큰 빨간색 표식으로 강조됩니다.
+                지도 위의 다른 원에 마우스를 올리면 병원 정보를 확인할 수 있습니다.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    map_df = prepare_map_dataframe(
+        result_df
+    )
+
+    if map_df.empty:
+        st.warning(
+            "조회된 병원에 사용할 수 있는 위도·경도 정보가 없어 "
+            "지도를 표시하지 못했습니다."
+        )
+
+    else:
+        # 병원명이 같은 경우를 대비해 선택 표시문구에 기관코드를 붙입니다.
+        map_df["선택표시"] = map_df.apply(
+            lambda row: (
+                f"{row['혼잡도표시']} · "
+                f"{row['병원명']} · "
+                f"가용 병상 {row['응급실']}개"
+            ),
+            axis=1,
+        )
+
+        display_to_hpid = dict(
+            zip(
+                map_df["선택표시"],
+                map_df["기관코드"],
+            )
+        )
+
+        hpid_to_display = dict(
+            zip(
+                map_df["기관코드"],
+                map_df["선택표시"],
+            )
+        )
+
+        current_hpid = (
+            st.session_state.selected_hpid
+        )
+
+        if current_hpid not in hpid_to_display:
+            current_hpid = str(
+                map_df.iloc[0]["기관코드"]
+            )
+
+        selected_display = st.selectbox(
+            "지도에서 강조할 응급실",
+            options=list(
+                display_to_hpid.keys()
+            ),
+            index=list(
+                display_to_hpid.keys()
+            ).index(
+                hpid_to_display[current_hpid]
+            ),
+        )
+
+        selected_hpid = str(
+            display_to_hpid[selected_display]
+        )
+
+        st.session_state.selected_hpid = (
+            selected_hpid
+        )
+
+        selected_row = map_df[
+            map_df["기관코드"] == selected_hpid
+        ].iloc[0]
+
+        st.session_state.selected_hospital_name = str(
+            selected_row.get(
+                "병원명",
+                "",
+            )
+        )
+
+        selected_address = (
+            selected_row.get("병원주소")
+            or "주소 정보 없음"
+        )
+
+        selected_phone = (
+            selected_row.get("응급실전화")
+            or "전화번호 정보 없음"
+        )
+
+        st.markdown(
+            f"""
+            <div class="selected-hospital-card">
+                <h4>📍 지도에서 선택한 응급실</h4>
+                <p><strong>{selected_row.get("병원명", "정보 없음")}</strong></p>
+                <p>
+                    {selected_row.get("혼잡도표시", "정보 없음")}
+                    · 응급실 가용 병상
+                    <strong>{selected_row.get("응급실", 0)}개</strong>
+                </p>
+                <p>주소: {selected_address}</p>
+                <p>응급실 전화: <strong>{selected_phone}</strong></p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        map_deck = create_hospital_map(
+            map_df=map_df,
+            selected_hpid=selected_hpid,
+        )
+
+        st.pydeck_chart(
+            map_deck,
+            use_container_width=True,
+            height=560,
+        )
+
+        legend_col1, legend_col2, legend_col3, legend_col4 = st.columns(4)
+
+        legend_col1.success("🟢 원활")
+        legend_col2.warning("🟡 보통")
+        legend_col3.warning("🟠 혼잡")
+        legend_col4.error("🔴 매우 혼잡")
+
+        st.caption(
+            "표식 색상은 가용 병상 기반 추정 혼잡도입니다. "
+            "큰 빨간 테두리 표식은 현재 선택한 병원입니다."
+        )
+
+
+# =========================================================
+# 23. 병원별 상세정보
+# =========================================================
+if not result_df.empty:
     st.subheader("🏨 병원별 자세한 정보")
+
+    active_department = (
+        st.session_state.search_department
+    )
 
     for index, row in result_df.iterrows():
         hospital_name = row.get(
@@ -1162,15 +1803,22 @@ if not result_df.empty:
                 f"**☎ 응급실 전화번호: {phone_number}**"
             )
 
+            st.write(
+                f"**주소:** "
+                f"{row.get('병원주소') or '주소 정보 없음'}"
+            )
+
             left, right = st.columns(2)
 
             with left:
                 st.write(
-                    f"**응급실 가용 병상:** {emergency_beds}개"
+                    f"**응급실 가용 병상:** "
+                    f"{emergency_beds}개"
                 )
 
                 st.write(
-                    f"**수술실:** {row.get('수술실', 0)}개"
+                    f"**수술실:** "
+                    f"{row.get('수술실', 0)}개"
                 )
 
                 st.write(
@@ -1179,7 +1827,8 @@ if not result_df.empty:
                 )
 
                 st.write(
-                    f"**입원실:** {row.get('입원실', 0)}개"
+                    f"**입원실:** "
+                    f"{row.get('입원실', 0)}개"
                 )
 
                 st.write(
@@ -1189,11 +1838,13 @@ if not result_df.empty:
 
             with right:
                 st.write(
-                    f"**CT:** {row.get('CT', '정보 없음')}"
+                    f"**CT:** "
+                    f"{row.get('CT', '정보 없음')}"
                 )
 
                 st.write(
-                    f"**MRI:** {row.get('MRI', '정보 없음')}"
+                    f"**MRI:** "
+                    f"{row.get('MRI', '정보 없음')}"
                 )
 
                 st.write(
@@ -1211,6 +1862,28 @@ if not result_df.empty:
                     f"{row.get('입력일시', '정보 없음')}"
                 )
 
+            latitude = to_float(
+                row.get("위도")
+            )
+
+            longitude = to_float(
+                row.get("경도")
+            )
+
+            if latitude is not None and longitude is not None:
+                navigation_query = urllib.parse.quote(
+                    hospital_name
+                )
+
+                st.link_button(
+                    "🧭 지도 서비스에서 병원 검색",
+                    (
+                        "https://map.naver.com/p/search/"
+                        f"{navigation_query}"
+                    ),
+                    use_container_width=True,
+                )
+
             if active_department == "치과 응급":
                 st.info(
                     "치과나 구강악안면외과의 실제 진료 가능 여부는 "
@@ -1225,7 +1898,7 @@ if not result_df.empty:
 
 
 # =========================================================
-# 15. 3단계: AI 채팅 영역
+# 24. 3단계: AI 채팅
 # =========================================================
 st.divider()
 
@@ -1234,9 +1907,9 @@ st.markdown(
     <div class="ai-chat-banner">
         <h2>🤖 3단계 · AI 응급실 추천 상담</h2>
         <p>
-            위에서 조회한 실시간 병상 정보를 바탕으로,
-            어느 응급실에 먼저 전화해 볼지 AI에게 물어보세요.<br>
-            병원명, 추정 혼잡도, 가용 병상과 전화번호를 비교해 짧게 안내합니다.
+            위에서 조회한 실시간 병상과 병원 위치 정보를 바탕으로,
+            어느 응급실에 먼저 전화할지 AI에게 물어보세요.<br>
+            병원명, 추정 혼잡도, 가용 병상, 주소와 전화번호를 비교해 안내합니다.
         </p>
     </div>
     """,
@@ -1250,7 +1923,9 @@ if st.session_state.emergency_df.empty:
     )
 
 else:
-    best_hospital = st.session_state.emergency_df.iloc[0]
+    best_hospital = (
+        st.session_state.emergency_df.iloc[0]
+    )
 
     st.success(
         f"현재 조회 결과의 첫 번째 후보: "
@@ -1259,6 +1934,12 @@ else:
         f"가용 병상 {best_hospital.get('응급실', 0)}개 · "
         f"전화 {best_hospital.get('응급실전화', '정보 없음')}"
     )
+
+    if st.session_state.selected_hospital_name:
+        st.info(
+            "현재 지도에서 선택한 병원: "
+            f"**{st.session_state.selected_hospital_name}**"
+        )
 
 st.markdown("#### 💬 질문 예시")
 
@@ -1279,8 +1960,8 @@ with example_col2:
     st.markdown(
         """
         <div class="question-example">
-            <strong>치과 응급</strong><br><br>
-            치과 응급이면 어느 병원에 먼저 전화해야 해?
+            <strong>지도 선택 병원</strong><br><br>
+            지도에서 선택한 병원에 먼저 전화해도 될까?
         </div>
         """,
         unsafe_allow_html=True,
@@ -1297,7 +1978,9 @@ with example_col3:
         unsafe_allow_html=True,
     )
 
-button_column, notice_column = st.columns([1, 4])
+button_column, notice_column = st.columns(
+    [1, 4]
+)
 
 with button_column:
     if st.button(
@@ -1315,12 +1998,16 @@ with notice_column:
 
 # 이전 대화를 말풍선으로 표시합니다.
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    with st.chat_message(
+        message["role"]
+    ):
+        st.markdown(
+            message["content"]
+        )
 
 
 user_prompt = st.chat_input(
-    "여기에 질문하세요. 예: 가장 덜 붐비는 응급실 세 곳을 알려줘."
+    "여기에 질문하세요. 예: 지도에서 선택한 병원과 다른 병원을 비교해줘."
 )
 
 if user_prompt:
@@ -1349,30 +2036,35 @@ if user_prompt:
             location=st.session_state.search_location,
             department=st.session_state.search_department,
             symptom=st.session_state.search_symptom,
+            selected_hospital_name=(
+                st.session_state.selected_hospital_name
+            ),
         )
 
         system_prompt = f"""
 너는 냉철한, 단답형, 시크한 성격이야.
 반드시 순수 한국어로만 답해.
 
-너는 사용자가 조회한 실시간 응급실 가용 병상 정보를 정리하는 안내 도우미다.
+너는 사용자가 조회한 실시간 응급실 가용 병상과 병원 위치정보를
+정리하는 안내 도우미다.
 
 반드시 지켜야 할 규칙:
 1. 의학적 진단을 내리지 마라.
 2. 약물 복용량이나 치료 방법을 지시하지 마라.
 3. 실제 대기시간을 알고 있는 것처럼 말하지 마라.
-4. 거리 정보가 없으므로 가장 가까운 병원이라고 단정하지 마라.
+4. 주소는 알 수 있지만 사용자의 정확한 좌표가 없으므로 가장 가까운 병원이라고 단정하지 마라.
 5. 현재 자료는 같은 시군구 안의 병원 목록이다.
 6. 생명이 위급해 보이면 다른 설명보다 먼저 119 신고를 안내한다.
 7. 병원을 추천할 때는 최대 세 곳만 짧게 제시한다.
-8. 병원명, 추정 혼잡도, 가용 병상과 전화번호를 함께 말한다.
+8. 병원명, 추정 혼잡도, 가용 병상, 주소와 전화번호를 함께 말한다.
 9. 출발 전에 응급실에 전화하라고 반드시 안내한다.
 10. 가용 병상이 있어도 실제 수용이 불가능할 수 있다고 말한다.
 11. 조회 결과가 없으면 병원을 지어내지 마라.
 12. 치과 응급에서는 치과 전용 진료 가능 여부를 단정하지 마라.
 13. 치과 응급은 응급실 병상, 수술실과 CT를 참고한 것이라고 밝혀라.
 14. 치과 또는 구강악안면외과 진료 가능 여부를 전화로 확인하라고 안내한다.
-15. 답변은 짧고 분명하게 한다.
+15. 지도에서 선택한 병원이 있으면 사용자의 질문에 따라 그 병원을 먼저 설명한다.
+16. 답변은 짧고 분명하게 한다.
 
 현재 앱의 조회 자료:
 {hospital_context}
@@ -1385,8 +2077,9 @@ if user_prompt:
             }
         ]
 
-        # 저장된 대화 기록을 함께 보내 이전 대화를 기억하게 합니다.
-        api_messages.extend(st.session_state.messages)
+        api_messages.extend(
+            st.session_state.messages
+        )
 
         try:
             with st.chat_message("assistant"):
@@ -1420,7 +2113,9 @@ if user_prompt:
             )
 
             with st.chat_message("assistant"):
-                st.warning(friendly_message)
+                st.warning(
+                    friendly_message
+                )
 
             st.session_state.messages.append(
                 {
@@ -1431,7 +2126,7 @@ if user_prompt:
 
 
 # =========================================================
-# 16. 하단 안내
+# 25. 하단 안내
 # =========================================================
 st.divider()
 
@@ -1445,6 +2140,6 @@ st.caption(
 )
 
 st.caption(
-    "이 앱은 응급실 가용 병상 정보를 보기 쉽게 정리한 참고용 서비스입니다. "
+    "이 앱은 응급실 가용 병상과 위치정보를 보기 쉽게 정리한 참고용 서비스입니다. "
     "의료진의 진단이나 119 구급상황관리센터의 판단을 대신하지 않습니다."
 )
